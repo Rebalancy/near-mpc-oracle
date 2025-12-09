@@ -22,7 +22,7 @@ export const SUPPORTED_CHAINS: Record<string, ChainConfig> = {
     rpcUrl: process.env.ARBITRUM_SEPOLIA_RPC || 'https://sepolia-rollup.arbitrum.io/rpc',
     aavePoolAddress: '0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff',
     usdcAddress: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
-    vaultAddress: process.env.ARBITRUM_VAULT_ADDRESS || '0xab686F6587345ccD11c353C0162743529E199edf', // NEW VAULT with agent 0xEB72C74f...
+    vaultAddress: process.env.ARBITRUM_VAULT_ADDRESS || '0xE168d95f8d1B8EC167A63c8E696076EC8EE95337', // Vault with agent 0x20f2747bbc52453ac0774b5b2fe0e28dc6637f30
   },
   optimismSepolia: {
     chainId: 11155420,

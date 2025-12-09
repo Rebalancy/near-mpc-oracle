@@ -9,12 +9,13 @@ export interface MpcSignatureResponse {
 }
 
 /**
- * NEAR Contract Service - Calls rebalancer-abcdefghij-3.testnet for signing
+ * NEAR Contract Service - Calls rebalancer-abcdefghij-57.testnet for signing
+ * Uses build_and_sign_crosschain_balance_snapshot_tx which computes EIP-712 digest on-chain
  */
 export class NearContractService {
   private nearContractId: string;
   private nearAccountId: string;
-  private agentAddress: string = '0xEB72C74faB4479CF392392106ef4907f910a090a';
+  private agentAddress: string = '0x20f2747bbc52453ac0774b5b2fe0e28dc6637f30';
   private keyStore: keyStores.InMemoryKeyStore | null = null;
   private isInitialized: boolean = false;
 
@@ -32,7 +33,7 @@ export class NearContractService {
     this.nearContractId = process.env.NEAR_CONTRACT_ID;
 
     logger.info(`NEAR contract configured: ${this.nearContractId}`);
-    logger.info(`Agent address (hardcoded): ${this.agentAddress}`);
+    logger.info(`Agent address: ${this.agentAddress}`);
   }
 
   async initialize(): Promise<void> {
@@ -53,6 +54,7 @@ export class NearContractService {
 
   /**
    * Sign a cross-chain balance snapshot using the NEAR contract
+   * The contract computes the EIP-712 digest on-chain for security
    */
   async signBalanceSnapshot(
     snapshot: CrossChainBalanceSnapshot,
@@ -64,48 +66,32 @@ export class NearContractService {
         await this.initialize();
       }
 
-      logger.info('Preparing EIP-712 digest for NEAR contract signing...');
+      logger.info('Calling NEAR contract to sign balance snapshot...');
+      logger.info(`  Vault: ${vaultAddress}`);
+      logger.info(`  Chain ID: ${chainId}`);
+      logger.info(`  Balance: ${snapshot.balance}`);
+      logger.info(`  Nonce: ${snapshot.nonce}`);
+      logger.info(`  Deadline: ${snapshot.deadline}`);
+      logger.info(`  Assets: ${snapshot.assets}`);
+      logger.info(`  Receiver: ${snapshot.receiver}`);
 
-      // Build EIP-712 domain
-      const domain = {
-        name: 'AaveVault',
-        version: '1',
-        chainId: chainId,
-        verifyingContract: vaultAddress,
-      };
-
-      // Build EIP-712 types
-      const types = {
-        CrossChainBalanceSnapshot: [
-          { name: 'balance', type: 'uint256' },
-          { name: 'nonce', type: 'uint256' },
-          { name: 'deadline', type: 'uint256' },
-          { name: 'assets', type: 'uint256' },
-          { name: 'receiver', type: 'address' },
-        ],
-      };
-
-      // Compute EIP-712 hash
-      const digest = ethers.TypedDataEncoder.hash(domain, types, {
-        balance: snapshot.balance,
-        nonce: snapshot.nonce,
-        deadline: snapshot.deadline,
-        assets: snapshot.assets,
-        receiver: snapshot.receiver,
-      });
-
-      logger.info(`EIP-712 digest: ${digest}`);
-
-      // Call NEAR contract to sign
-      const payload = ethers.getBytes(digest);
-      logger.info(`Payload to sign (32 bytes): ${ethers.hexlify(payload)}`);
-
-      // Call the NEAR contract's sign_digest method
+      // Build args in SnapshotDigestArgs format
+      // The contract computes the EIP-712 digest on-chain
+      // Note: Rust u128/u64 expect JSON numbers, String fields expect JSON strings
       const args = {
-        digest: Array.from(payload), // Convert to array of numbers
+        args: {
+          balance: parseInt(snapshot.balance),      // u128 - JSON number
+          chain_id: chainId,                        // u64 - JSON number
+          verifying_contract: vaultAddress,         // String
+          nonce: parseInt(snapshot.nonce),          // u64 - JSON number
+          deadline: parseInt(snapshot.deadline),    // u64 - JSON number
+          assets: snapshot.assets,                  // String (U256 as string)
+          receiver: snapshot.receiver,              // String (address)
+        },
+        callback_gas_tgas: 50,                      // u64 - JSON number
       };
 
-      logger.info(`Calling ${this.nearContractId}.sign_digest...`);
+      logger.info(`Calling ${this.nearContractId}.build_and_sign_crosschain_balance_snapshot_tx...`);
 
       // Connect to NEAR
       const near = await connect({
@@ -119,7 +105,7 @@ export class NearContractService {
       // Call the contract
       const result: any = await account.functionCall({
         contractId: this.nearContractId,
-        methodName: 'sign_digest',
+        methodName: 'build_and_sign_crosschain_balance_snapshot_tx',
         args,
         gas: '300000000000000' as any,
         attachedDeposit: '0' as any,
@@ -153,18 +139,46 @@ export class NearContractService {
       }
 
       // Extract r, s, v
+      // The contract returns v as recovery_id (0 or 1), we need to convert to Ethereum format (27 or 28)
       const r = signatureBytes.subarray(0, 32);
       const s = signatureBytes.subarray(32, 64);
-      const v = signatureBytes[64];
+      const recoveryId = signatureBytes[64];
+      const v = recoveryId + 27; // Convert recovery_id to Ethereum v
 
       logger.info(`Signature components:`);
       logger.info(`  r: ${ethers.hexlify(r)}`);
       logger.info(`  s: ${ethers.hexlify(s)}`);
-      logger.info(`  v: ${v}`);
+      logger.info(`  recovery_id: ${recoveryId} -> v: ${v}`);
 
-      // Concatenate into Ethereum signature format
+      // Concatenate into Ethereum signature format with corrected v
       const signature65 = ethers.hexlify(ethers.concat([r, s, new Uint8Array([v])]));
       logger.info(`Final signature (65 bytes): ${signature65}`);
+
+      // Compute the digest locally for verification purposes
+      const domain = {
+        name: 'AaveVault',
+        version: '1',
+        chainId: chainId,
+        verifyingContract: vaultAddress,
+      };
+
+      const types = {
+        CrossChainBalanceSnapshot: [
+          { name: 'balance', type: 'uint256' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+          { name: 'assets', type: 'uint256' },
+          { name: 'receiver', type: 'address' },
+        ],
+      };
+
+      const digest = ethers.TypedDataEncoder.hash(domain, types, {
+        balance: snapshot.balance,
+        nonce: snapshot.nonce,
+        deadline: snapshot.deadline,
+        assets: snapshot.assets,
+        receiver: snapshot.receiver,
+      });
 
       // Verify the signature
       const recoveredAddress = ethers.recoverAddress(digest, signature65);
@@ -199,4 +213,3 @@ export function getNearContract(): NearContractService {
   }
   return instance;
 }
-
