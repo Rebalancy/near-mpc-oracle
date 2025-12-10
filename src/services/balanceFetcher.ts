@@ -205,7 +205,8 @@ export async function fetchVaultATokenBalance(
 }
 
 /**
- * Fetch complete vault balance (USDC + aTokens) on a specific chain
+ * Fetch complete vault balance using ERC4626 totalAssets()
+ * This is the correct way to get vault value since USDC is invested in AAVE as aTokens
  */
 export async function fetchVaultBalance(
   chainConfig: ChainConfig,
@@ -215,17 +216,45 @@ export async function fetchVaultBalance(
     const provider = new ethers.JsonRpcProvider(chainConfig.rpcUrl);
     const blockNumber = await provider.getBlockNumber();
 
-    const [usdcBalance, aTokenBalance] = await Promise.all([
-      fetchVaultUSDCBalance(chainConfig, vaultAddress),
-      fetchVaultATokenBalance(chainConfig, vaultAddress),
-    ]);
+    // ERC4626 vault - use totalAssets() to get the real value
+    // The vault invests USDC into AAVE, so USDC.balanceOf(vault) would be 0
+    // totalAssets() returns the total value of all assets managed by the vault
+    const VAULT_ABI = [
+      'function totalAssets() view returns (uint256)',
+    ];
+    
+    const vault = new ethers.Contract(vaultAddress, VAULT_ABI, provider);
+    let totalAssets: bigint;
+    
+    try {
+      totalAssets = await vault.totalAssets();
+      logger.info(`Vault totalAssets on ${chainConfig.name}: ${ethers.formatUnits(totalAssets, 6)} USDC`);
+    } catch (error: any) {
+      logger.warn(`Failed to call totalAssets on ${chainConfig.name}, falling back to token balances`);
+      // Fallback to old method if vault doesn't support totalAssets
+      const [usdcBalance, aTokenBalance] = await Promise.all([
+        fetchVaultUSDCBalance(chainConfig, vaultAddress),
+        fetchVaultATokenBalance(chainConfig, vaultAddress),
+      ]);
+      return {
+        chainId: chainConfig.chainId,
+        chainName: chainConfig.name,
+        vaultAddress,
+        usdcBalance,
+        aTokenBalance,
+        blockNumber,
+        timestamp: Math.floor(Date.now() / 1000),
+      };
+    }
 
+    // For ERC4626 vaults, totalAssets IS the total value
+    // We put it in aTokenBalance since that's what represents invested assets
     return {
       chainId: chainConfig.chainId,
       chainName: chainConfig.name,
       vaultAddress,
-      usdcBalance,
-      aTokenBalance,
+      usdcBalance: '0', // USDC is invested, not sitting idle
+      aTokenBalance: totalAssets.toString(), // Total vault value
       blockNumber,
       timestamp: Math.floor(Date.now() / 1000),
     };

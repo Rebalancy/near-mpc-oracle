@@ -8,7 +8,10 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "tsx --test test/**/*.test.ts",
-    "demo": "tsx demo.ts"
+    "test:integration": "tsx test-contract-integration.ts",
+    "demo": "tsx demo.ts",
+    "deploy:build": "npm run build && docker build --platform linux/amd64 -t near-mpc-oracle .",
+    "deploy:phala": "bash phala-deploy.sh"
   },
   "dependencies": {
     "axios": "^1.7.7",

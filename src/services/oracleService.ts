@@ -3,7 +3,7 @@ import { logger } from '../utils/logger';
 import { getNearContract } from './nearContractService';
 import { CrossChainBalanceSnapshot } from './nearMpcService';
 import { fetchChainBalances, fetchVaultBalances, aggregateBalances } from './balanceFetcher';
-import { getVaultNonce } from './vaultService';
+import { getVaultNonce, getCrossChainInvestedAssets } from './vaultService';
 import { getChainById } from '../config/chains';
 
 export interface SignedBalanceSnapshot {
@@ -61,32 +61,36 @@ export class OracleService {
       logger.info('Step 2: Fetching USDC in all vaults...');
       const vaultBalances = await fetchVaultBalances();
 
-      // 4. Aggregate total aTokens
+      // 4. Aggregate total aTokens (for logging/debugging)
       const aggregated = aggregateBalances(chainBalances, vaultBalances);
       logger.info(`Total aTokens across chains: ${aggregated.totalATokens}`);
-      
-      // 🧪 TEMPORARY: Fake a cross-chain balance for testing depositWithSignature
-      // TODO: Remove this once real cross-chain deposits exist
-      const FAKE_CROSS_CHAIN_BALANCE = "1000000"; // 1 USDC for testing
-      logger.warn(`⚠️  TESTING MODE: Overriding balance with fake value: ${FAKE_CROSS_CHAIN_BALANCE}`);
 
-      // 5. Get nonce from vault
-      logger.info(`Step 3: Getting nonce from vault on chain ${vaultChainId}...`);
+      // 5. Get vault config and cross-chain invested assets
+      logger.info(`Step 3: Getting vault state on chain ${vaultChainId}...`);
       const vaultChain = getChainById(vaultChainId);
       if (!vaultChain || !vaultChain.vaultAddress) {
         throw new Error(`No vault configured for chain ${vaultChainId}`);
       }
 
+      // Get the vault's actual crossChainInvestedAssets (this is what matters for deposit routing)
+      const crossChainBalance = await getCrossChainInvestedAssets(
+        vaultChain.vaultAddress,
+        vaultChain.rpcUrl,
+        vaultChainId
+      );
+      logger.info(`Vault crossChainInvestedAssets: ${crossChainBalance.toString()}`);
+
+      // 7. Get nonce from vault
       const nonce = await getVaultNonce(vaultChain.vaultAddress, vaultChain.rpcUrl, vaultChainId);
       logger.info(`Vault nonce: ${nonce}`);
 
-      // 5. Calculate deadline (5 minutes from now)
+      // 8. Calculate deadline (5 minutes from now)
       const deadline = Math.floor(Date.now() / 1000) + 300;
       logger.info(`Deadline: ${deadline} (5 minutes from now)`);
 
-      // 6. Create snapshot
+      // 8. Create snapshot with vault's cross-chain balance
       const snapshot: CrossChainBalanceSnapshot = {
-        balance: FAKE_CROSS_CHAIN_BALANCE, // 🧪 TEMP: Using fake balance for testing
+        balance: crossChainBalance.toString(), // Vault's crossChainInvestedAssets
         nonce: nonce.toString(),
         deadline: deadline.toString(),
         assets,
@@ -95,7 +99,7 @@ export class OracleService {
 
       logger.info('Snapshot created:', snapshot);
 
-      // 7. Sign with NEAR MPC
+      // 9. Sign with NEAR MPC
       logger.info('Step 4: Calling NEAR MPC to sign...');
       const { signature } = await this.nearMpc.signBalanceSnapshot(
         snapshot,

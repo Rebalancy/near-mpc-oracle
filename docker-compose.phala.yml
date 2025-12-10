@@ -1,11 +1,21 @@
 version: '3.8'
 services:
   oracle:
-    image: docker.io/gregdev0x/near-mpc-oracle:v5.0-new-contract
+    image: docker.io/gregdev0x/near-mpc-oracle:latest
     ports:
       - "3001:3001"
-    env_file:
-      - phala.env
+    environment:
+      - API_KEY=${API_KEY}
+      - PORT=${PORT:-3001}
+      - NEAR_ACCOUNT_ID=${NEAR_ACCOUNT_ID}
+      - NEAR_PRIVATE_KEY=${NEAR_PRIVATE_KEY}
+      - NEAR_RPC_URL=${NEAR_RPC_URL:-https://rpc.testnet.near.org}
+      - NEAR_CONTRACT_ID=${NEAR_CONTRACT_ID}
+      - ETHEREUM_SEPOLIA_RPC=${ETHEREUM_SEPOLIA_RPC}
+      - BASE_SEPOLIA_RPC=${BASE_SEPOLIA_RPC}
+      - ARBITRUM_SEPOLIA_RPC=${ARBITRUM_SEPOLIA_RPC}
+      - OPTIMISM_SEPOLIA_RPC=${OPTIMISM_SEPOLIA_RPC}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
